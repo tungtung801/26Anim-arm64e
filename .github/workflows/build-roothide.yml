@@ -1,0 +1,112 @@
+name: Build 26Anim (RootHide)
+
+# Same workflow as the author's working 26Unlock tweak: macOS runner + Xcode +
+# official roothide theos installer.  Package architecture comes out as
+# iphoneos-arm64e; the dylib itself is fat (arm64 + arm64e) and contains no
+# /var/jb strings, so roothide does not need its dynamic patch module.
+
+on:
+  workflow_dispatch:
+    inputs:
+      archs:
+        description: 'ARCHS to build (fat = "arm64 arm64e"; A12-only test = "arm64e"; A11-only = "arm64")'
+        required: false
+        default: 'arm64 arm64e'
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "16.4"
+
+      - name: Install dependencies
+        run: |
+          brew install ldid make
+
+      - name: Install RootHide Theos
+        env:
+          # install-sdk queries api.github.com; unauthenticated requests get
+          # rate limited ("ERROR: api.github.com request failed?!").
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/roothide/theos/master/bin/install-theos)" < /dev/null
+          echo "installer exit code: $?"
+          set -e
+
+          THEOS_DIR="$HOME/theos"
+          [ -d "$THEOS_DIR" ] || THEOS_DIR="$HOME/.theos"
+          if [ ! -d "$THEOS_DIR" ]; then
+            echo "::error::could not locate roothide theos"
+            exit 1
+          fi
+          echo "THEOS=$THEOS_DIR" >> $GITHUB_ENV
+          echo "theos: $THEOS_DIR"
+
+          # the SDK step is the fragile one - retry it, then download directly
+          if [ -z "$(ls -A "$THEOS_DIR/sdks" 2>/dev/null)" ]; then
+            echo "::warning::no SDK yet - installing manually with token"
+            mkdir -p "$THEOS_DIR/sdks"
+            "$THEOS_DIR/bin/install-sdk" latest < /dev/null || {
+              echo "install-sdk failed - downloading the SDK directly"
+              url=$(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+                    https://api.github.com/repos/theos/sdks/releases/latest \
+                    | grep -o 'https://[^"]*iPhoneOS[0-9.]*\.sdk\.tar\.xz' \
+                    | sort -V | tail -n1)
+              echo "sdk url: $url"
+              curl -fsSL "$url" | tar -xJ -C "$THEOS_DIR/sdks"
+            }
+          fi
+          echo "--- SDKs ---"
+          ls -A "$THEOS_DIR/sdks"
+
+      - name: Remove stale packages
+        working-directory: 26Anim
+        run: rm -f packages/*.deb
+
+      - name: Build roothide package
+        working-directory: 26Anim
+        run: |
+          echo "ARCHS = ${{ github.event.inputs.archs || 'arm64 arm64e' }}"
+          make clean
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide ARCHS="${{ github.event.inputs.archs || 'arm64 arm64e' }}"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: 26Anim-roothide
+          path: 26Anim/packages/*.deb
+          if-no-files-found: error
+
+      - name: Verify payload
+        continue-on-error: true
+        working-directory: 26Anim
+        run: |
+          DEB=$(ls packages/*.deb | head -1)
+          echo "deb: $DEB"
+          TMP=$(mktemp -d); cd "$TMP"
+          ar -x "$GITHUB_WORKSPACE/26Anim/$DEB"
+          ls -la
+          echo "=== control fields ==="
+          tar -xzf control.tar.gz -O 2>/dev/null || true
+          echo "=== payload ==="
+          for t in data.tar.*; do echo "-- $t"; tar -tf "$t"; done
+          cd "$GITHUB_WORKSPACE/26Anim"
+          echo "=== slices ==="
+          find . -name '*.dylib' -exec otool -hv {} \; | grep -E "ARM64|cpusubtype"
+          echo "=== linked libraries (must NOT list CydiaSubstrate) ==="
+          find . -name '*.dylib' -exec otool -L {} \;
+          echo "=== code signature ==="
+          find . -name '*.dylib' -exec sh -c 'echo "--- $1"; otool -l "$1" | grep -A3 LC_CODE_SIGNATURE || echo "NO CODE SIGNATURE"; codesign -dvv "$1" 2>&1 | head -8' _ {} \;
+          echo "=== /var/jb strings inside the dylib (must be 0) ==="
+          find . -name '*.dylib' -print0 | xargs -0 -I{} sh -c 'printf "%s: " "{}"; strings "{}" | grep -c "/var/jb" || echo 0'

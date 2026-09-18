@@ -60,3 +60,21 @@ Khuyến nghị RootHide Bootstrap **1.4+** (2.0 stable có SpringBoard injectio
 
 - ngkhoi (@cakoi_.) — tác giả 26Anim gốc (cơ chế + ý tưởng)
 - tungtung801 — rebuild, genie warp mới, roothide/CI
+
+## v0.0.2 — fix "bấm vô không có hiệu ứng / cửa sổ trong suốt"
+
+Nguyên nhân ở 0.0.1 (bản viết lại lệch khỏi kiến trúc bản gốc) và cách 0.0.2 sửa —
+tất cả trở về đúng cơ chế mà bản gốc 1.0.3 dùng:
+
+| Lỗi 0.0.1 | Sửa trong 0.0.2 |
+|---|---|
+| Driver **pin frame fullscreen** của zoom view → đè layout của SpringBoard, giết luôn animation gốc | **Không đụng frame/transform/animation** của view nữa — mesh/sublayerTransform tự vẽ trong layer fullscreen (đúng cách bản gốc dùng `setSublayerTransform:` + mesh) |
+| Nhận hướng mở/đóng sai thì vẫn chạy → cửa sổ trong suốt, warp ngược | **Bất định → rút lui**: thêm hook `SBMainWorkspaceTransitionRequest setEventLabel:` timestamp các transition (giống `_lastHomeTransitionTime` của bản gốc). Không có tín hiệu rõ → stock animation chạy nguyên vẹn |
+| App Switcher bị nhầm là "đóng app" | Switcher không sinh tín hiệu home/activate → không bao giờ bị chiếm (bản gốc cũng xử lý switcher riêng qua `_framesInAppSwitcher`) |
+| Áp mesh khi view chưa được size fullscreen | Chờ view đạt kích thước màn hình rồi mới áp mesh; quá 1.4s → auto-abort |
+| Mesh lỗi = crash/garbage | `@try/@catch` quanh CAMeshTransform + fallback zoom trơn; thêm pref **meshMode** (Off/Normal/Swapped) để đảo từ vựng from/to ngay trong Settings nếu iOS của bạn có ngữ nghĩa vertex khác |
+| Opacity đụng toàn bộ thời gian | Chỉ fade guard 10% đầu (mở) / cuối (đóng); kết thúc restore 100% (mesh nil, sublayerTransform, cornerRadius, masksToBounds, grabbers) |
+
+Chỉ mình `SBMainWorkspaceTransitionRequest` được hook thủ công bằng `MSHookMessageEx`
+sau khi `NSClassFromString` — class vắng mặt trên iOS nào đó là no-op sạch, không phụ
+thuộc cách nil-handling của engine.

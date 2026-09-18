@@ -11,18 +11,18 @@
 			<string>Main Toggle</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>com.tungtung801.26anim/settingschanged</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
-			<key>label</key>
-			<string>Enable Animations</string>
 			<key>default</key>
 			<true/>
 			<key>defaults</key>
 			<string>com.tungtung801.26anim</string>
 			<key>key</key>
 			<string>enabled</string>
-			<key>PostNotification</key>
-			<string>com.tungtung801.26anim/settingschanged</string>
+			<key>label</key>
+			<string>Enable Animations</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -31,28 +31,28 @@
 			<string>Animation Style</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>com.tungtung801.26anim/settingschanged</string>
 			<key>cell</key>
 			<string>PSSegmentCell</string>
-			<key>label</key>
-			<string>animSpeed</string>
-			<key>validValues</key>
-			<array>
-				<integer>0</integer>
-				<integer>1</integer>
-			</array>
-			<key>validTitles</key>
-			<array>
-				<string>Original (iOS native)</string>
-				<string>iOS 26</string>
-			</array>
 			<key>default</key>
 			<integer>1</integer>
 			<key>defaults</key>
 			<string>com.tungtung801.26anim</string>
 			<key>key</key>
 			<string>animSpeed</string>
-			<key>PostNotification</key>
-			<string>com.tungtung801.26anim/settingschanged</string>
+			<key>label</key>
+			<string>animSpeed</string>
+			<key>validTitles</key>
+			<array>
+				<string>Original (iOS native)</string>
+				<string>iOS 26</string>
+			</array>
+			<key>validValues</key>
+			<array>
+				<integer>0</integer>
+				<integer>1</integer>
+			</array>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -61,24 +61,24 @@
 			<string>Genie warp intensity — how strongly the window bends toward the icon (iOS 26 liquid look). Default 1.0.</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>com.tungtung801.26anim/settingschanged</string>
 			<key>cell</key>
 			<string>PSSliderCell</string>
-			<key>label</key>
-			<string>Warp Strength</string>
-			<key>min</key>
-			<real>0.0</real>
-			<key>max</key>
-			<real>2</real>
-			<key>showValue</key>
-			<true/>
 			<key>default</key>
-			<real>1</real>
+			<real>1.0</real>
 			<key>defaults</key>
 			<string>com.tungtung801.26anim</string>
 			<key>key</key>
 			<string>warpStrength</string>
-			<key>PostNotification</key>
-			<string>com.tungtung801.26anim/settingschanged</string>
+			<key>label</key>
+			<string>Warp Strength</string>
+			<key>max</key>
+			<real>2.0</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -87,36 +87,68 @@
 			<string>Transition speed — lower value = snappier. Default 1.0.</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>com.tungtung801.26anim/settingschanged</string>
 			<key>cell</key>
 			<string>PSSliderCell</string>
-			<key>label</key>
-			<string>Speed Factor</string>
-			<key>min</key>
-			<real>0.5</real>
-			<key>max</key>
-			<real>2</real>
-			<key>showValue</key>
-			<true/>
 			<key>default</key>
-			<real>1</real>
+			<real>1.0</real>
 			<key>defaults</key>
 			<string>com.tungtung801.26anim</string>
 			<key>key</key>
 			<string>speedFactor</string>
+			<key>label</key>
+			<string>Speed Factor</string>
+			<key>max</key>
+			<real>2.0</real>
+			<key>min</key>
+			<real>0.5</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Mesh render mode — đổi sang 'Swapped' nếu hiệu ứng bị ngược/méo, hoặc 'Off' để dùng zoom trơn (an toàn nhất).</string>
+		</dict>
+		<dict>
 			<key>PostNotification</key>
 			<string>com.tungtung801.26anim/settingschanged</string>
+			<key>cell</key>
+			<string>PSSegmentCell</string>
+			<key>default</key>
+			<integer>1</integer>
+			<key>defaults</key>
+			<string>com.tungtung801.26anim</string>
+			<key>key</key>
+			<string>meshMode</string>
+			<key>label</key>
+			<string>meshMode</string>
+			<key>validTitles</key>
+			<array>
+				<string>Off</string>
+				<string>Normal</string>
+				<string>Swapped</string>
+			</array>
+			<key>validValues</key>
+			<array>
+				<integer>0</integer>
+				<integer>1</integer>
+				<integer>2</integer>
+			</array>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 		</dict>
 		<dict>
+			<key>action</key>
+			<string>respring:</string>
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
 			<string>Respring</string>
-			<key>action</key>
-			<string>respring:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -127,10 +159,10 @@
 		<dict>
 			<key>cell</key>
 			<string>PSTitleValueCell</string>
-			<key>label</key>
-			<string>ngkhoi</string>
 			<key>get</key>
 			<string>readSpecifierValue:</string>
+			<key>label</key>
+			<string>ngkhoi</string>
 			<key>sublabel</key>
 			<string>@cakoi_.</string>
 		</dict>

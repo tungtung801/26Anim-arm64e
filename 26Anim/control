@@ -1,0 +1,8 @@
+Package: com.tungtung801.26anim
+Name: 26Anim
+Version: 0.1.0
+Architecture: iphoneos-arm64
+Description: iOS 26 style genie app open/close animation (arm64 + arm64e, roothide)
+Maintainer: tungtung801
+Author: tungtung801 (original 26Anim by ngkhoi)
+Section: Tweaks

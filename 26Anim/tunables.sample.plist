@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- copy file nay ra /var/mobile/26Anim.plist roi sua bang Filza.
+         Khong co file = dung gia tri mac dinh. Mo app ke tiep ap dung. -->
+    <key>enabled</key>      <true/>
+    <key>warp</key>         <real>1.0</real>
+    <key>duration</key>     <real>0.45</real>
+    <key>meshSwapped</key>  <false/>
+    <key>edgeGain</key>     <real>1.0</real>
+    <key>debug</key>        <true/>
+</dict>
+</plist>

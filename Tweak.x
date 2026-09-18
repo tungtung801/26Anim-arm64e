@@ -1,44 +1,27 @@
 /*****************************************************************************************
- *  26Anim 2 — iOS 26 app open/close animation for older iOS (SpringBoard tweak)
+ *  26Anim (com.tungtung801.26anim) v0.0.3
+ *  iOS 26 app open/close genie animation for SpringBoard (roothide build).
  *
- *  Rebuild & improvement of ngkhoi's original 26Anim (v1.0.3).
+ *  ARCHITECTURE — deliberately minimal, "piggyback" on the native transition:
  *
- *  What the real iOS 26 (Beta 6+) transition does, and what we replicate here:
+ *    · SpringBoard owns the zoom: it scales SBFullscreenZoomView icon→screen
+ *      (or screen→icon) exactly as it always does. We NEVER touch frame,
+ *      transform, opacity, animations or layout of that view.
+ *    · Every frame we READ the native progress from the view's
+ *      presentationLayer (scale ratio) — SpringBoard native timing, not ours.
+ *    · We ONLY WRITE `layer.meshTransform` — a property the stock flow never
+ *      uses — with an anchor-driven, edge-aware genie warp. Because we only
+ *      ever add a deformation that is zero at both endpoints, the stock
+ *      animation cannot break, and open/close are exact inverses of the
+ *      same field (progress is "how open" in both directions).
+ *    · The anchor (tapped icon) is converted to layer space ONCE, up front;
+ *      nothing is ever re-read from the transformed layer → no feedback loop.
  *
- *   1. NON-UNIFORM "GENIE / APERTURE" WARP — the app surface does NOT scale uniformly.
- *      It expands from / contracts into the Home Screen icon with an edge warp whose
- *      strength is driven by the icon's position: the window edge nearest the icon moves
- *      ahead of the far edge, producing the characteristic "membrane pulled toward the
- *      icon" look. Implemented with the private CAMeshTransform API (same engine the
- *      original tweak used), rebuilt every frame on a 120 Hz CADisplayLink.
- *
- *   2. FAST SPRING WITH A VERY LIGHT BOUNCE — both directions settle quickly with a tiny
- *      overshoot. We read Apple's own transition spring parameters at runtime
- *      (homeGesture*Zoom*Settings / switcherToHomeSettings: -response, -dampingRatio)
- *      exactly like the original tweak did, and fall back to tuned constants.
- *
- *   3. CONTINUOUS CORNER MORPH — the window corners interpolate between the Home Screen
- *      icon corner radius and the display corner radius (kCACornerCurveContinuous), so
- *      the shrinking window visually "becomes" the icon.
- *
- *   4. NO HARD SNAP — the zoom view cross-fades over the first/last ~12 % of the
- *      transition so the surface hand-off to/from the real app snapshot is invisible.
- *
- *   5. HOME GRABBERS FADE — the page grabber views fade with the transition.
- *
- *  Prefs (com.tungtung801.26anim):
- *      enabled       BOOL   master switch (default YES)
- *      animSpeed     INT    0 = original iOS native animation, 1 = iOS 26 style
- *      warpStrength  DOUBLE 0.0 – 2.0, multiplier on the genie warp (default 1.0)
- *      speedFactor   DOUBLE 0.5 – 2.0, multiplies spring response (default 1.0)
- *
- *  Jailbreak compatibility:
- *      - RootHide Bootstrap (rootless /var/jb)  — build THEOS_PACKAGE_SCHEME=rootless
- *      - Dopamine / palera1n rootless           — same rootless deb
- *      - unc0ver / palera1n rootful             — rootful deb
- *      Prefs are read via CFPreferences with a direct-plist fallback across
- *      /var/jb/var/mobile, /var/mobile and /var/root so settings always load.
- *****************************************************************************************/
+ *  Mesh density matches the original 26Anim 1.0.3: 5×5 vertices / 16 faces
+ *  (CreateBulgedMesh produced 0x19 vertices / 0x10 faces).
+ *  Warp math follows the anchor-driven model: strong pull toward the icon
+ *  with distance falloff + edge amplification, continuous opposite edge.
+ ****************************************************************************************/
 
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
@@ -47,13 +30,11 @@
 #import <math.h>
 
 /* ------------------------------------------------------------------ */
-/* Private API surface (resolved at runtime — never link directly)     */
+/* Private API                                                         */
 /* ------------------------------------------------------------------ */
 
-/* Private CoreAnimation mesh warp (exact layout per cleaned runtime headers):
-     typedef struct { CGPoint from; CAPoint3D to; } CAMeshVertex;   // 5 floats
-     typedef struct { unsigned int indices[4]; float w[4]; } CAMeshFace;  // quad
-   `to` is normalized against layer bounds, `from` is texture UV in [0,1]. */
+/* CAMeshVertex = { CGPoint from; CAPoint3D to; } → 5 floats per vertex.
+   Faces are quads: unsigned indices[4] + float weights[4] (w = 1.0). */
 @interface CAMeshTransform : NSObject
 + (instancetype)meshTransformWithVertexCount:(NSUInteger)vertexCount
                                     vertices:(const float *)vertices
@@ -62,75 +43,38 @@
                           depthNormalization:(NSString *)depthNormalization;
 @end
 
-@interface UIScreen (Anim26)
-- (CGFloat)_displayCornerRadius;
-@end
-
 @interface CALayer (Anim26)
 @property (nonatomic, retain) CAMeshTransform *meshTransform;
 @end
 
-/* SpringBoard classes we hook (declared so logos hooks compile cleanly) */
 @interface SBIconView : UIView @end
 @interface SBFullscreenZoomView : UIView @end
-@interface SBHomeGrabberView : UIView @end
-
-/* Apple's transition spring settings objects inside SpringBoard.
-   They are only used as a *source of parameters*; absence is fine.
-   (Accessed with objc_msgSend casts — no compile-time property.)   */
 
 /* ------------------------------------------------------------------ */
-/* Tunables / defaults                                                 */
+/* Prefs                                                               */
 /* ------------------------------------------------------------------ */
 
-#define kPrefsID            @"com.tungtung801.26anim"
-#define kDarwinNotify       @"com.tungtung801.26anim/settingschanged"
+#define kPrefsID      @"com.tungtung801.26anim"
+#define kDarwinNotify @"com.tungtung801.26anim/settingschanged"
 
-/* Fallback spring parameters when Apple's settings can't be read.
-   Chosen to match the iOS 26 feel: fast, damping just under critical
-   so there is a very small single overshoot ("bounce rất nhẹ"). */
-static const double kFallbackOpenResponse  = 0.38;
-static const double kFallbackOpenDamping   = 0.90;
-static const double kFallbackCloseResponse = 0.42;
-static const double kFallbackCloseDamping  = 0.88;
+static BOOL       prefEnabled      = YES;
+static NSInteger  prefAnimSpeed    = 1;   /* 0 = native only, 1 = iOS 26 warp */
+static double     prefWarpStrength = 1.0; /* 0..2 warp amplitude multiplier   */
+static NSInteger  prefMeshMode     = 1;   /* 0 off, 1 normal, 2 swapped uv    */
 
-/* Warp shaping */
-static const double kPi = 3.14159265358979323846;
-
-/* Mesh resolution — 14×14 quads (225 vertices, 392 triangles).
-   High enough for smooth edges, cheap enough to rebuild at 120 Hz. */
-#define kMeshN 14
-
-/* ------------------------------------------------------------------ */
-/* Preferences                                                         */
-/* ------------------------------------------------------------------ */
-
-static BOOL   prefEnabled      = YES;
-static NSInteger prefAnimSpeed = 1;      // 0 = native, 1 = iOS 26
-static double prefWarpStrength = 1.0;
-static double prefSpeedFactor  = 1.0;
-static NSInteger prefMeshMode  = 1;      // 0 = mesh off (zoom fallback), 1 = mesh on, 2 = mesh swapped
-
-/* Read one pref value — CFPreferences first, then manual plist read.
-   The manual fallback mirrors the original tweak's approach and makes the
-   tweak robust on every jailbreak scheme: RootHide /var/jb rootless,
-   rootless Dopamine, rootful unc0ver/palera1n and /var/root defaults.
-   (cfprefsd on jailbreaks occasionally serves stale values after a
-   Darwin notification; reading the file directly avoids that.) */
 static id Anim26PrefValue(NSString *key) {
     CFPreferencesAppSynchronize((CFStringRef)kPrefsID);
     id v = CFBridgingRelease(CFPreferencesCopyAppValue((CFStringRef)key,
                                                        (CFStringRef)kPrefsID));
     if (v) return v;
-
     static NSArray *cands;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         cands = @[
-            @"/var/jb/var/mobile/Library/Preferences/com.tungtung801.26anim.plist", /* RootHide / rootless */
-            @"/var/mobile/Library/Preferences/com.tungtung801.26anim.plist",        /* rootful             */
+            @"/var/jb/var/mobile/Library/Preferences/com.tungtung801.26anim.plist",
+            @"/var/mobile/Library/Preferences/com.tungtung801.26anim.plist",
             @"/var/jb/var/root/Library/Preferences/com.tungtung801.26anim.plist",
-            @"/var/root/Library/Preferences/com.tungtung801.26anim.plist"           /* root defaults       */
+            @"/var/root/Library/Preferences/com.tungtung801.26anim.plist"
         ];
     });
     for (NSString *path in cands) {
@@ -144,178 +88,78 @@ static id Anim26PrefValue(NSString *key) {
 static void LoadPrefs(void) {
     NSNumber *b = (NSNumber *)Anim26PrefValue(@"enabled");
     if ([b isKindOfClass:[NSNumber class]]) prefEnabled = [b boolValue];
-
     NSNumber *n = (NSNumber *)Anim26PrefValue(@"animSpeed");
     if ([n isKindOfClass:[NSNumber class]]) prefAnimSpeed = [n integerValue];
-
-    NSNumber *num = (NSNumber *)Anim26PrefValue(@"warpStrength");
-    if ([num isKindOfClass:[NSNumber class]]) prefWarpStrength = [num doubleValue];
-    num = (NSNumber *)Anim26PrefValue(@"speedFactor");
-    if ([num isKindOfClass:[NSNumber class]]) prefSpeedFactor = [num doubleValue];
-    num = (NSNumber *)Anim26PrefValue(@"meshMode");
-    if ([num isKindOfClass:[NSNumber class]]) prefMeshMode = [num integerValue];
-
+    NSNumber *w = (NSNumber *)Anim26PrefValue(@"warpStrength");
+    if ([w isKindOfClass:[NSNumber class]]) prefWarpStrength = [w doubleValue];
+    NSNumber *m = (NSNumber *)Anim26PrefValue(@"meshMode");
+    if ([m isKindOfClass:[NSNumber class]]) prefMeshMode = [m integerValue];
     prefWarpStrength = fmax(0.0, fmin(2.0, prefWarpStrength));
-    prefSpeedFactor  = fmax(0.4, fmin(2.5, prefSpeedFactor));
 }
 
 /* ------------------------------------------------------------------ */
-/* Icon anchor — where the transition expands from / contracts into    */
+/* Icon anchor — captured once, in window coordinates, then normalized */
 /* ------------------------------------------------------------------ */
 
 typedef struct {
-    BOOL      valid;          /* we have a usable anchor                     */
-    CGPoint   center;         /* icon center in window coordinates           */
-    CGSize    size;           /* icon size in points                         */
-    CGFloat   cornerRadius;   /* icon corner radius in points                */
-    CFTimeInterval tapTime;   /* when the tap was recorded                   */
+    BOOL    valid;
+    CGPoint center;   /* window coords */
+    CGSize  size;     /* window coords */
+    CFTimeInterval tapTime;
 } IconAnchor;
 
-static IconAnchor gAnchor = { NO, {0, 0}, {60, 60}, 13.0, 0 };
-static IconAnchor gLastAnchor = { NO, {0, 0}, {60, 60}, 13.0, 0 };
+static IconAnchor gAnchor, gLastAnchor;
+
+/* Native-transition timestamps (role of the original's
+   _lastHomeTransitionTime): lets us tell a real close-to-home or app
+   launch apart from App Switcher / unrelated snapshot views. */
+static CFTimeInterval g_homeTransitionAt = -1e9;
+static CFTimeInterval g_appActivateAt    = -1e9;
 
 /* ------------------------------------------------------------------ */
-/* Geometry helpers                                                    */
+/* Small math                                                          */
 /* ------------------------------------------------------------------ */
 
-static CGFloat ScreenCornerRadius(void) {
-    CGFloat r = 0;
-    if ([[UIScreen mainScreen] respondsToSelector:@selector(_displayCornerRadius)])
-        r = [[UIScreen mainScreen] _displayCornerRadius];
-    if (r <= 0) {
-        CGSize s = [UIScreen mainScreen].bounds.size;
-        CGFloat m = fmin(s.width, s.height);
-        r = m * 0.060;            // reasonable default across devices
-        if (m > 420) r = 55;      // Pro Max class
-        else if (m > 390) r = 55;
-        else r = 47;
-    }
-    return r;
+#define kPi 3.14159265358979323846
+
+static inline float clampf(float v, float lo, float hi) {
+    return fminf(fmaxf(v, lo), hi);
 }
 
-/* direction from a to b */
-static CGPoint NormDir(CGPoint a, CGPoint b) {
-    CGFloat dx = b.x - a.x, dy = b.y - a.y;
-    CGFloat l = sqrt(dx * dx + dy * dy);
-    if (l < 0.0001) return CGPointMake(0, 0);
-    return CGPointMake(dx / l, dy / l);
+static inline float smoothstepf(float e0, float e1, float x) {
+    float t = clampf((x - e0) / (e1 - e0), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
 }
 
 /* ------------------------------------------------------------------ */
-/* Spring — critically-damped-family semi-implicit integrator.
- * Equivalent to Apple's UISpringTimingParameters(response:damping:)
- * model:  x''(t) = -k (x(t) - target) - c x'(t)
- *   k = (2π / response)²        c = 2 * dampingRatio * sqrt(k)
- * Integrated at display-link rate → frame-accurate, gesture-independent.
+/* Genie mesh builder — anchor-driven warp (5×5, like the original).   *
+ *                                                                     *
+ * Mesh lives in the layer's unit square. p = native progress          *
+ * (0 = icon, 1 = fullscreen) — identical field for open & close.      *
+ * warpAmp = sin(π p) → deformation is zero at both endpoints, so the  *
+ * stock zoom is never distorted at hand-off.                          *
+ *                                                                     *
+ * Per vertex (user-space formula, normalized coords):                 *
+ *   dx,dy  = anchor − vertex                                          *
+ *   dist   = |d|                pull = smoothstep(0, 0.90, dist)      *
+ *   strength = (1 − pull)² · warpAmp   ← strong near the icon         *
+ *   edgeFactor amplifies the edge nearest the icon (dock/top),        *
+ *   `opposite` keeps the far edge continuous (no broken top edge).    *
  * ------------------------------------------------------------------ */
 
-typedef struct {
-    double value, velocity;
-    double target;
-    double omega;     /* 2π / response  */
-    double zeta;      /* damping ratio  */
-} Spring;
+#define kMeshN 5   /* 5×5 vertices → 36 verts, 25 faces (original: 25v/16f) */
 
-static void SpringInit(Spring *s, double value, double response, double damping) {
-    s->value = value; s->velocity = 0; s->target = 1.0;
-    s->omega = (2.0 * kPi) / fmax(0.05, response);
-    s->zeta = fmax(0.1, fmin(1.2, damping));
-}
-
-static BOOL SpringStep(Spring *s, double dt) {
-    /* semi-implicit Euler; clamp dt to survive hiccups / backgrounding */
-    if (dt <= 0) dt = 1.0 / 120.0;
-    if (dt > 0.05) dt = 0.05;
-    double k = s->omega * s->omega;
-    double c = 2.0 * s->zeta * s->omega;
-    double a = -k * (s->value - s->target) - c * s->velocity;
-    s->velocity += a * dt;
-    s->value    += s->velocity * dt;
-    double err = fabs(s->value - s->target);
-    double spd = fabs(s->velocity);
-    return (err < 0.0008 && spd < 0.0025);   /* settled */
-}
-
-/* ------------------------------------------------------------------ */
-/* Read Apple's real transition springs (like the original tweak did)  */
-/* ------------------------------------------------------------------ */
-
-static double AppleResponse(BOOL opening) {
-    double out = 0;
-    Class c = NSClassFromString(@"_UIAnimationSettingsFactory");
-    if (!c) return 0;
-    SEL sel = opening ? NSSelectorFromString(@"homeGestureCenterRowZoomUpSettings")
-                      : NSSelectorFromString(@"iconZoomDownSettings");
-    if (![c respondsToSelector:sel]) {
-        sel = opening ? NSSelectorFromString(@"homeGestureEdgeRowZoomUpSettings")
-                      : NSSelectorFromString(@"switcherToHomeSettings");
-        if (![c respondsToSelector:sel]) return 0;
-    }
-    id settings = ((id (*)(id, SEL))objc_msgSend)(c, sel);
-    if (!settings || ![(NSObject *)settings respondsToSelector:@selector(response)]) return 0;
-    out = ((double (*)(id, SEL))objc_msgSend)(settings, @selector(response));
-    return out;
-}
-
-static double AppleDamping(BOOL opening) {
-    double out = 0;
-    Class c = NSClassFromString(@"_UIAnimationSettingsFactory");
-    if (!c) return 0;
-    SEL sel = opening ? NSSelectorFromString(@"homeGestureCenterRowZoomUpSettings")
-                      : NSSelectorFromString(@"iconZoomDownSettings");
-    if (![c respondsToSelector:sel]) {
-        sel = opening ? NSSelectorFromString(@"homeGestureEdgeRowZoomUpSettings")
-                      : NSSelectorFromString(@"switcherToHomeSettings");
-        if (![c respondsToSelector:sel]) return 0;
-    }
-    id settings = ((id (*)(id, SEL))objc_msgSend)(c, sel);
-    if (!settings || ![(NSObject *)settings respondsToSelector:@selector(dampingRatio)]) return 0;
-    out = ((double (*)(id, SEL))objc_msgSend)(settings, @selector(dampingRatio));
-    return out;
-}
-
-/* ------------------------------------------------------------------ *
- *  CAMeshTransform builder — the heart of the effect.                 *
- *                                                                     *
- *  Mesh lives in the layer's unit square (x,y,u,v in [0,1]).          *
- *  progress p in [0,1] : 0 = icon rect, 1 = fullscreen.               *
- *                                                                     *
- *  For every vertex:                                                  *
- *    - screen position of the vertex inside the *fully zoomed* window *
- *    - w = how close that vertex is to the anchor icon (0..1)         *
- *    - local progress  lp = p + warp * sin(pi*p) * (w - 0.5)          *
- *      -> near-the-icon vertices lead, far vertices lag.  The sine    *
- *        envelope guarantees the warp is 0 at both ends (continuity,  *
- *        no broken corners at start/end of the transition).           *
- *    - vertex position = lerp(iconRectPoint, fullRectPoint, lp)       *
- *    - plus a small perpendicular "belly" bulge:                      *
- *        b = bulge * sin(pi*p) * sin(pi*u) * sin(pi*v) * perp(dir)    *
- *      which gives the liquid/genie volume without breaking edges.    *
- * ------------------------------------------------------------------ */
-
-static CAMeshTransform * MakeGenieMesh(CGRect iconRect, CGRect fullRect,
-                                       CGPoint anchor, double p, BOOL opening) {
+static CAMeshTransform *BuildGenieMesh(CGPoint anchorN, double p, double warpAmp) {
     static float        verts[(kMeshN + 1) * (kMeshN + 1) * 5];
-    static unsigned int faces[kMeshN * kMeshN * 8];   /* quads: 4 idx + 4 w */
-    static BOOL facesBuilt = NO;
+    static unsigned int faces[kMeshN * kMeshN * 8];
+    static BOOL         facesBuilt = NO;
 
     const int N = kMeshN;
     const int V = (N + 1) * (N + 1);
 
-    /* warp amount for this frame.
-       Opening leads a bit stronger than closing: on iOS 26 the open burst is
-       snappier/more elastic, the close contract is slightly calmer. */
-    double ws = prefWarpStrength * (opening ? 1.12 : 0.92);
-    double warp  = 0.34 * ws * sin(kPi * p);
-    double bulge = 0.058 * ws * sin(kPi * p);
-
-    CGFloat fw = fullRect.size.width, fh = fullRect.size.height;
-    if (fw < 1 || fh < 1) return nil;
-
-    CGFloat diag = sqrt(fw * fw + fh * fh);
-    CGFloat maxDist = diag * 1.05;
-
-    CGPoint dir = NormDir(anchor, CGPointMake(CGRectGetMidX(fullRect), CGRectGetMidY(fullRect)));
+    float ax = (float)anchorN.x;
+    float ay = (float)anchorN.y;
+    float amp = (float)warpAmp;
 
     int vi = 0;
     for (int j = 0; j <= N; j++) {
@@ -323,53 +167,47 @@ static CAMeshTransform * MakeGenieMesh(CGRect iconRect, CGRect fullRect,
             float u = (float)i / N;
             float v = (float)j / N;
 
-            /* where this vertex sits inside the fullscreen window */
-            CGPoint fs = CGPointMake(fullRect.origin.x + u * fw,
-                                     fullRect.origin.y + v * fh);
+            float dx = ax - u;
+            float dy = ay - v;
+            float dist = sqrtf(dx * dx + dy * dy);
 
-            /* distance-based leadership weight (1 near icon, 0 far away) */
-            CGFloat dxs = fs.x - anchor.x, dys = fs.y - anchor.y;
-            CGFloat dist = sqrt(dxs * dxs + dys * dys);
-            double w = 1.0 - fmin(1.0, dist / maxDist);
+            float pull = smoothstepf(0.0f, 0.90f, dist);
+            float strength = powf(1.0f - pull, 2.0f) * amp;
 
-            /* local progress: near side leads the far side */
-            double lp = p + warp * (w - 0.5);
-            lp = fmax(0.0, fmin(1.0, lp));
+            float len = fmaxf(dist, 0.0001f);
+            float nx = dx / len;
+            float ny = dy / len;
 
-            /* base position: from icon rect → fullscreen rect */
-            double x = iconRect.origin.x + u * iconRect.size.width
-                     + lp * (fs.x - (iconRect.origin.x + u * iconRect.size.width));
-            double y = iconRect.origin.y + v * iconRect.size.height
-                     + lp * (fs.y - (iconRect.origin.y + v * iconRect.size.height));
+            /* edge amplification: the edge the icon sits on moves more */
+            float top    = 1.0f - v;
+            float bottom = v;
+            float edgeFactor = (ay < 0.5f) ? (0.60f + top * 0.85f)
+                                           : (0.60f + bottom * 0.85f);
 
-            /* perpendicular genie belly, shaped by both texture axes so
-               the border stays a smooth continuous curve */
-            double px = -dir.y, py = dir.x;
-            double bell = bulge * sin(kPi * u) * sin(kPi * v);
-            /* bulge points toward the icon when closing, away when opening */
-            double sign = opening ? -1.0 : 1.0;
-            x += sign * bell * px * diag;
-            y += sign * bell * py * diag;
+            float pullX = nx * strength * edgeFactor * 0.42f;
+            float pullY = ny * strength * edgeFactor * 0.70f;
 
-            /* map screen position back into the layer's unit square.
-               CAMeshVertex layout: { from(u,v), to(x,y,z) }
-               meshMode 2 swaps from/to — escape hatch for iOS builds whose
-               vertex semantics differ. */
-            float mx = (float)((x - fullRect.origin.x) / fw);
-            float my = (float)((y - fullRect.origin.y) / fh);
+            /* keep the opposite edge continuous */
+            float opposite = smoothstepf(0.0f, 0.45f, (ay < 0.5f) ? v : 1.0f - v);
+            pullY *= (0.35f + 0.65f * opposite);
+
+            float tx = u + pullX;
+            float ty = v + pullY;
 
             if (prefMeshMode == 2) {
-                verts[vi * 5 + 0] = mx;
-                verts[vi * 5 + 1] = my;
+                /* swapped from/to — escape hatch for iOS builds whose
+                   CAMeshVertex semantics differ */
+                verts[vi * 5 + 0] = tx;
+                verts[vi * 5 + 1] = ty;
                 verts[vi * 5 + 2] = u;
                 verts[vi * 5 + 3] = v;
             } else {
-                verts[vi * 5 + 0] = u;
-                verts[vi * 5 + 1] = v;
-                verts[vi * 5 + 2] = mx;
-                verts[vi * 5 + 3] = my;
+                verts[vi * 5 + 0] = u;   /* from.x */
+                verts[vi * 5 + 1] = v;   /* from.y */
+                verts[vi * 5 + 2] = tx;  /* to.x   */
+                verts[vi * 5 + 3] = ty;  /* to.y   */
             }
-            verts[vi * 5 + 4] = 0.0f;
+            verts[vi * 5 + 4] = 0.0f;    /* to.z   */
         }
     }
 
@@ -377,13 +215,13 @@ static CAMeshTransform * MakeGenieMesh(CGRect iconRect, CGRect fullRect,
         int fi = 0;
         for (int j = 0; j < N; j++) {
             for (int i = 0; i < N; i++) {
-                unsigned int a = j * (N + 1) + i;   /* top-left     */
-                unsigned int b = a + 1;             /* top-right    */
-                unsigned int c = a + (N + 1);       /* bottom-left  */
-                unsigned int d = c + 1;             /* bottom-right */
+                unsigned int a = j * (N + 1) + i;
+                unsigned int b = a + 1;
+                unsigned int c = a + (N + 1);
+                unsigned int d = c + 1;
                 faces[fi++] = a; faces[fi++] = b; faces[fi++] = d; faces[fi++] = c;
                 faces[fi++] = 0x3F800000; faces[fi++] = 0x3F800000;
-                faces[fi++] = 0x3F800000; faces[fi++] = 0x3F800000;  /* w = 1.0f */
+                faces[fi++] = 0x3F800000; faces[fi++] = 0x3F800000; /* w = 1.0f */
             }
         }
         facesBuilt = YES;
@@ -393,100 +231,48 @@ static CAMeshTransform * MakeGenieMesh(CGRect iconRect, CGRect fullRect,
     if (!meshClass) return nil;
     return [meshClass meshTransformWithVertexCount:V
                                           vertices:verts
-                                         faceCount:kMeshN * kMeshN
+                                         faceCount:N * N
                                              faces:faces
-                                depthNormalization:nil];  /* default: None */
+                                depthNormalization:nil];
 }
 
 /* ------------------------------------------------------------------ */
-/* The driver — owns the display link and drives one transition        */
+/* Driver — reads native progress, writes ONLY meshTransform           */
 /* ------------------------------------------------------------------ */
 
 @interface AN26Driver : NSObject
-- (instancetype)initWithLayer:(CALayer *)layer
-                     iconRect:(CGRect)iconRect
-                       anchor:(CGPoint)anchor
-                      opening:(BOOL)opening;
-- (void)tick:(CADisplayLink *)link;
+- (instancetype)initWithView:(UIView *)view
+                    iconRect:(CGRect)iconRect;
 @property (nonatomic, strong) CADisplayLink *displayLink;
-@property (nonatomic, strong) CALayer        *targetLayer;
 @property (nonatomic, weak)   UIView         *attachedView;
-@property (nonatomic, assign) CGRect          iconRect;
-@property (nonatomic, assign) CGPoint         anchor;
-@property (nonatomic, assign) BOOL            opening;
-@property (nonatomic, assign) BOOL            hasStarted;
-@property (nonatomic, assign) CGFloat         savedCornerRadius;
-@property (nonatomic, assign) BOOL            savedMasksToBounds;
-@property (nonatomic, strong) NSHashTable    *grabbers;   /* weak */
 @end
 
 static AN26Driver *gCurrentDriver = nil;
 
-/* every SBHomeGrabberView ever seen (weak) — the driver fades them all */
-static NSHashTable *gAllGrabbers = nil;
-
-/* Transition signals — mirrors the original tweak's _lastHomeTransitionTime:
-   the workspace transition request tells us WHY a zoom view just appeared,
-   which is what separates a real close-to-home from App Switcher views
-   (the original pre-baked separate switcher frames for the same reason). */
-static CFTimeInterval g_homeTransitionAt = -1e9;
-static CFTimeInterval g_appActivateAt    = -1e9;
-
 @implementation AN26Driver {
-    CGRect          _fullRect;     /* screen rect — reference space for the mesh  */
-    CFTimeInterval  _last;
+    CGPoint         _anchorN;    /* icon center normalized to the screen  */
+    CGFloat         _iconRatio;  /* iconWidth / screenWidth (stock start) */
+    CGSize          _screen;
+    double          _lastP;
+    CFTimeInterval  _lastMove;
     CFTimeInterval  _elapsed;
-    CATransform3D   _savedSublayerTransform;
-    BOOL            _meshBroken;   /* private API threw — stay on zoom fallback   */
-    Spring          _spring;
+    BOOL            _hasStarted;
 }
 
-- (instancetype)initWithLayer:(CALayer *)layer
-                     iconRect:(CGRect)iconRect
-                       anchor:(CGPoint)anchor
-                      opening:(BOOL)opening {
+- (instancetype)initWithView:(UIView *)view
+                    iconRect:(CGRect)iconRect {
     if ((self = [super init])) {
-        self.targetLayer = layer;
-        self.attachedView = (UIView *)layer.delegate;
-        self.iconRect    = iconRect;
-        self.anchor      = anchor;
-        self.opening     = opening;
-        self.grabbers    = [NSHashTable weakObjectsHashTable];
-        if (!gAllGrabbers) gAllGrabbers = [NSHashTable weakObjectsHashTable];
-        for (id g in gAllGrabbers) [self.grabbers addObject:g];
+        self.attachedView = view;
+        _screen  = [UIScreen mainScreen].bounds.size;
+        if (_screen.width < 8 || _screen.height < 8)
+            _screen = view.window.bounds.size;
 
-        /* Save exactly what we touch — like the original tweak did
-           (_savedCornerRadius / _savedMasksToBounds). We deliberately do NOT
-           touch frame, transform or animations of the view itself. */
-        self.savedCornerRadius    = layer.cornerRadius;
-        self.savedMasksToBounds   = layer.masksToBounds;
-        _savedSublayerTransform   = layer.sublayerTransform;
+        _anchorN = CGPointMake(clampf(iconRect.origin.x + iconRect.size.width  / 2.0, 0.03, 0.97) / _screen.width,
+                               clampf(iconRect.origin.y + iconRect.size.height / 2.0, 0.03, 0.97) / _screen.height);
+        _iconRatio = clampf(iconRect.size.width / fmaxf(1.0f, (float)_screen.width), 0.02f, 0.60f);
 
-        CGSize ss = [UIScreen mainScreen].bounds.size;
-        _fullRect = CGRectMake(0, 0, ss.width, ss.height);
-
-        /* spring: Apple's real settings first, tuned fallbacks otherwise */
-        double resp = AppleResponse(opening);
-        double damp = AppleDamping(opening);
-        if (resp <= 0.01 || resp > 1.5) resp = opening ? kFallbackOpenResponse : kFallbackCloseResponse;
-        if (damp <= 0.05 || damp > 1.05) damp = opening ? kFallbackOpenDamping : kFallbackCloseDamping;
-        resp /= fmax(0.4, prefSpeedFactor);
-
-        SpringInit(&_spring, opening ? 0.0 : 1.0, resp, damp);
-        _spring.target = opening ? 1.0 : 0.0;
-        _spring.velocity = opening ? 0.4 / fmax(0.1, resp) : -0.4 / fmax(0.1, resp);
-
-        /* start from a clean slate for THIS layer's custom props only */
-        [CATransaction begin];
-        [CATransaction setDisableActions:YES];
-        if (self.opening) {
-            layer.opacity = 0.0;
-        } else {
-            layer.opacity = 1.0;
-        }
-        [CATransaction commit];
-
-        self.hasStarted = NO;
+        _lastP = -1.0;
+        _lastMove = CACurrentMediaTime();
 
         self.displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(tick:)];
         self.displayLink.preferredFramesPerSecond = 120;
@@ -497,131 +283,64 @@ static CFTimeInterval g_appActivateAt    = -1e9;
 }
 
 - (void)tick:(CADisplayLink *)link {
-    CALayer *layer = self.targetLayer;
     UIView *view = self.attachedView;
-    if ((!view || !view.window) && (layer.superlayer == nil)) { [self finish]; return; }
+    CALayer *layer = view.layer;
+    if (!view.window || !layer) { [self finish]; return; }
 
     CFTimeInterval now = CACurrentMediaTime();
-    if (!self.hasStarted) { self.hasStarted = YES; self->_last = now; }
+    if (!_hasStarted) { _hasStarted = YES; _lastMove = now; }
+    _elapsed = now - _lastMove;
+    if (_elapsed > 2.5) { [self finish]; return; }
 
-    double dt = now - self->_last;
-    self->_last = now;
+    /* ---- native progress: read the presentation, never the model ------- */
+    CALayer *pres = [layer presentationLayer];
+    if (!pres) return;
+    CGRect pf = pres.frame;
+    CGRect b  = layer.bounds;
+    if (b.size.width < 8 || pf.size.width < 0.5) return;
 
-    self->_elapsed += dt;
-    if (self->_elapsed > 1.4) { [self finish]; return; }
+    CGFloat s = pf.size.width / b.size.width;      /* current stock scale */
+    s = clampf(s, 0.0f, 2.0f);
+    double p = (_iconRatio >= 0.999) ? 1.0 : (double)((s - (float)_iconRatio) / (1.0f - (float)_iconRatio));
+    p = fmax(0.0, fmin(1.0, p));
 
-    /* The mesh maps geometry in normalized layer space — it is only valid
-       once SpringBoard has sized the zoom view to the full screen (which it
-       does immediately for the zoom transition). Until then: hold our fade
-       state and wait; the elapsed cap aborts safely if it never happens. */
-    CGSize ssz = _fullRect.size;
-    BOOL sizedOK = layer.bounds.size.width >= ssz.width * 0.90
-                && layer.bounds.size.height >= ssz.height * 0.90;
-    if (!sizedOK) {
-        [CATransaction begin];
-        [CATransaction setDisableActions:YES];
-        layer.opacity = self.opening ? 0.0 : 1.0;
-        [CATransaction commit];
-        return;
-    }
+    /* ---- stall detection: stock flow finished → release everything ----- */
+    if (fabs(p - _lastP) > 0.002) { _lastP = p; _lastMove = now; }
+    else if (_elapsed > 0.5 && (now - _lastMove) > 0.35) { [self finish]; return; }
 
-    BOOL settled = SpringStep(&_spring, dt);
-    double p = fmax(0.0, fmin(1.0, _spring.value));
+    /* ---- write ONLY meshTransform (never animated by stock) ------------ */
+    double warpAmp = prefWarpStrength * sin(kPi * p);   /* 0 at both ends */
 
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-
-    /* ---- geometry -------------------------------------------------------
-       The view's own frame/transform stay untouched (SpringBoard owns them).
-       Preferred path: genie CAMeshTransform (like the original tweak).
-       Fallback path (mesh unavailable / threw): plain zoom of the content
-       via sublayerTransform — still snappier than nothing, never broken. */
-    BOOL usedMesh = NO;
-    if (!_meshBroken && prefMeshMode != 0 && p > 0.001 && p < 0.999) {
+    if (warpAmp > 0.004 && prefMeshMode != 0) {
         @try {
-            CAMeshTransform *mesh = MakeGenieMesh(self.iconRect, _fullRect,
-                                                  self.anchor, p, self.opening);
-            if (mesh) { layer.meshTransform = mesh; usedMesh = YES; }
+            CAMeshTransform *mesh = BuildGenieMesh(_anchorN, p, warpAmp);
+            if (mesh) layer.meshTransform = mesh;
         }
         @catch (NSException *e) {
-            _meshBroken = YES;
             layer.meshTransform = nil;
+            prefMeshMode = 0;                    /* degrade to pure stock */
         }
-    } else if (!_meshBroken && prefMeshMode != 0) {
-        layer.meshTransform = nil;          /* endpoints — clean state */
-    }
-
-    if (!usedMesh) {
-        /* zoom fallback anchored on the icon (screen space == layer space:
-           the layer is fullscreen and pinned at the window origin) */
-        CGFloat s = (CGFloat)p;
-        if (s < 0.015) s = 0.015;
-        CATransform3D t = CATransform3DIdentity;
-        t = CATransform3DTranslate(t, (1 - s) * self.anchor.x, (1 - s) * self.anchor.y, 0);
-        t = CATransform3DScale(t, s, s, 1);
-        layer.sublayerTransform = t;
-        layer.masksToBounds = NO;          /* don't clip the zooming content */
     } else {
-        layer.sublayerTransform = _savedSublayerTransform;
-        layer.masksToBounds = YES;
+        layer.meshTransform = nil;
     }
-
-    /* ---- corner radius (only meaningful in mesh mode) ------------------- */
-    if (usedMesh) {
-        CGFloat screenR = ScreenCornerRadius();
-        CGFloat iconR   = self.iconRect.size.width * 0.2237;
-        CGFloat pe      = (CGFloat)(p * p * (3.0 - 2.0 * p));
-        layer.cornerRadius = screenR + (iconR - screenR) * pe;
-        layer.masksToBounds = YES;
-    }
-
-    /* ---- opacity: tiny guard fades only --------------------------------- */
-    CGFloat a = 1.0;
-    if (self.opening) {
-        if (p < 0.10) a = p / 0.10;                    /* fade-in at start   */
-    } else {
-        if (p < 0.18) a = fmax(0.0, (p - 0.02) / 0.16); /* fade-out at end   */
-    }
-    layer.opacity = a;
-
-    /* ---- grabbers ride along -------------------------------------------- */
-    for (id g in self.grabbers) {
-        if ([g respondsToSelector:@selector(setAlpha:)]) {
-            CGFloat ga = self.opening ? (1.0 - 0.85 * sin(kPi * (CGFloat)p))
-                                      : (0.15 + 0.85 * (CGFloat)p);
-            [(UIView *)g setAlpha:ga];
-        }
-    }
-
     [CATransaction commit];
-
-    if (settled) [self finish];
 }
 
 - (void)finish {
     [self.displayLink invalidate];
     self.displayLink = nil;
 
-    CALayer *layer = self.targetLayer;
-    if (layer) {
+    UIView *view = self.attachedView;
+    if (view.layer) {
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
-        /* restore everything we touched — the stock flow takes back over */
-        layer.meshTransform     = nil;
-        layer.sublayerTransform = _savedSublayerTransform;
-        layer.opacity           = 1.0;
-        layer.cornerRadius      = self.savedCornerRadius;
-        layer.masksToBounds     = self.savedMasksToBounds;
+        view.layer.meshTransform = nil;          /* hand back a clean layer */
         [CATransaction commit];
     }
-
-    for (id g in self.grabbers) {
-        if ([g respondsToSelector:@selector(setAlpha:)]) [(UIView *)g setAlpha:1.0];
-    }
-
     if (gCurrentDriver == self) gCurrentDriver = nil;
 }
-
 
 @end
 
@@ -631,8 +350,7 @@ static CFTimeInterval g_appActivateAt    = -1e9;
 
 %group Core
 
-/* Record the tapped icon so the transition can anchor to it.
-   SBIconView covers app icons, folders and widgets. */
+/* Record the tapped icon (window coords). This is our transition anchor. */
 %hook SBIconView
 - (void)setHighlighted:(BOOL)highlighted {
     %orig;
@@ -640,91 +358,74 @@ static CFTimeInterval g_appActivateAt    = -1e9;
     UIView *v = (UIView *)self;
     CGRect r = [v convertRect:v.bounds toView:nil];
     if (r.size.width < 8 || r.size.height < 8) return;
-    CGFloat lr = v.layer.cornerRadius;
-    gAnchor.valid = YES;
-    gAnchor.center = CGPointMake(CGRectGetMidX(r), CGRectGetMidY(r));
-    gAnchor.size = r.size;
-    gAnchor.cornerRadius = lr > 2 ? lr : r.size.width * 0.2237;
-    gAnchor.tapTime = CACurrentMediaTime();
-    gLastAnchor = gAnchor;
+    gAnchor.valid    = YES;
+    gAnchor.center   = CGPointMake(CGRectGetMidX(r), CGRectGetMidY(r));
+    gAnchor.size     = r.size;
+    gAnchor.tapTime  = CACurrentMediaTime();
+    gLastAnchor      = gAnchor;
 }
 %end
 
-/* The fullscreen zoom snapshot view — attach our driver here. */
+/* Attach the warp driver when SpringBoard creates the fullscreen zoom view.
+   We only *add* a mesh on top of the native animation; any ambiguity here
+   simply leaves the stock transition untouched. */
 %hook SBFullscreenZoomView
 - (void)didMoveToWindow {
     %orig;
 
     if (!prefEnabled || prefAnimSpeed != 1) return;
+    if (gCurrentDriver) return;
 
     UIView *selfView = (UIView *)self;
     if (!selfView.window) return;
-
-    /* never stack two drivers */
-    if (gCurrentDriver) return;
 
     CGRect bounds = selfView.bounds;
     CGSize ss = selfView.window.bounds.size;
     BOOL looksFullscreen = bounds.size.width >= ss.width * 0.90
                         && bounds.size.height >= ss.height * 0.90;
 
-    /* Direction decision — mirrors the original tweak's state machine
-       (_hasTappedIcon + _lastHomeTransitionTime):
-         OPEN : fresh icon tap, or a fresh workspace "activate/launch"
-         CLOSE: fresh workspace "home" transition AND fullscreen view
-         else : ABORT — stock animation plays untouched (safety first).
-       App Switcher / other snapshot views get no fresh signals → never
-       hijacked (the original served them separate pre-baked frames). */
+    /* Direction gating via native signals (mirrors the original's
+       _hasTappedIcon + _lastHomeTransitionTime): */
     CFTimeInterval now = CACurrentMediaTime();
-    BOOL recentTap   = gAnchor.valid && (now - gAnchor.tapTime) < 0.9;
-    BOOL freshOpen   = (now - g_appActivateAt)   < 1.0;
-    BOOL freshHome   = (now - g_homeTransitionAt) < 2.0;
+    BOOL recentTap = gAnchor.valid && (now - gAnchor.tapTime) < 0.9;
+    BOOL freshOpen = (now - g_appActivateAt)    < 1.0;
+    BOOL freshHome = (now - g_homeTransitionAt) < 2.0;
 
-    BOOL opening;
-    if (recentTap || freshOpen) {
-        opening = YES;
-    } else if (freshHome && looksFullscreen) {
-        opening = NO;
-    } else {
-        return;                              /* unknown context — stock wins */
-    }
+    if (!(recentTap || freshOpen || (freshHome && looksFullscreen)))
+        return;                              /* ambiguous → stock wins */
 
-    /* anchor for closing: last known icon, else bottom-center fallback */
-    IconAnchor a = gAnchor;
-    if (!opening && !a.valid) a = gLastAnchor;
+    /* anchor for this transition (tap icon, else last icon, else dock) */
+    IconAnchor a = gAnchor.valid ? gAnchor : gLastAnchor;
     if (!a.valid) {
         a.valid = YES;
         a.size = CGSizeMake(60, 60);
         a.center = CGPointMake(ss.width / 2.0, ss.height - 44 - 30);
-        a.cornerRadius = 13;
     }
-    /* keep the anchor inside the screen (folders can sit off-screen lists) */
-    a.center.x = fminf(fmaxf(a.center.x, 30), ss.width - 30);
+    a.center.x = fminf(fmaxf(a.center.x, 30), ss.width  - 30);
     a.center.y = fminf(fmaxf(a.center.y, 30), ss.height - 30);
+    if (a.size.width < 8) a.size = CGSizeMake(60, 60);
 
     CGRect iconRect = CGRectMake(a.center.x - a.size.width / 2.0,
                                  a.center.y - a.size.height / 2.0,
                                  a.size.width, a.size.height);
 
-    AN26Driver *driver = [[AN26Driver alloc] initWithLayer:selfView.layer
-                                                  iconRect:iconRect
-                                                    anchor:a.center
-                                                   opening:opening];
-    gCurrentDriver = driver;
+    gCurrentDriver = [[AN26Driver alloc] initWithView:selfView
+                                             iconRect:iconRect];
 }
 %end
 
-/* Workspace transition requests — timestamp home-gesture closes and app
-   activations (same role as the original's _lastHomeTransitionTime).
-   If this class/selector doesn't exist on the running iOS, the hook simply
-   never fires and the close path stays on the stock animation (safe). */
-/* Hooked manually (not %hook) so a missing class on some iOS build is a
-   clean no-op instead of depending on the hooking engine's nil handling. */
-static void (*_orig_SBMainWorkspaceTransitionRequest_setEventLabel)(id, SEL, NSString *);
+%end /* group Core */
 
-static void _hook_SBMainWorkspaceTransitionRequest_setEventLabel(id self, SEL _cmd, NSString *label) {
-    if (_orig_SBMainWorkspaceTransitionRequest_setEventLabel)
-        _orig_SBMainWorkspaceTransitionRequest_setEventLabel(self, _cmd, label);
+/* ------------------------------------------------------------------ */
+/* Optional transition-signal hook — installed manually + nil-safe so a
+   missing class on some iOS build is a clean no-op.                   */
+/* ------------------------------------------------------------------ */
+
+static void (*_orig_WSReq_setEventLabel)(id, SEL, NSString *);
+
+static void _hook_WSReq_setEventLabel(id self, SEL _cmd, NSString *label) {
+    if (_orig_WSReq_setEventLabel)
+        _orig_WSReq_setEventLabel(self, _cmd, label);
     if (![label isKindOfClass:[NSString class]]) return;
     NSString *l = [label lowercaseString];
     CFTimeInterval now = CACurrentMediaTime();
@@ -732,20 +433,6 @@ static void _hook_SBMainWorkspaceTransitionRequest_setEventLabel(id self, SEL _c
     if ([l containsString:@"activate"] || [l containsString:@"launch"])
                                            g_appActivateAt = now;
 }
-
-/* Home grabbers (page dots) register themselves so the driver can fade them. */
-%hook SBHomeGrabberView
-- (void)didMoveToWindow {
-    %orig;
-    if (!gAllGrabbers) gAllGrabbers = [NSHashTable weakObjectsHashTable];
-    if (self.window) {
-        [gAllGrabbers addObject:self];
-        if (gCurrentDriver) [gCurrentDriver.grabbers addObject:self];
-    }
-}
-%end
-
-%end /* group Core */
 
 /* ------------------------------------------------------------------ */
 /* Init                                                                */
@@ -769,12 +456,11 @@ static void PrefsChangedCallback(CFNotificationCenterRef center,
 
     %init(Core);
 
-    /* optional signal hook — installed only if the class exists */
     Class wsReq = NSClassFromString(@"SBMainWorkspaceTransitionRequest");
     if (wsReq) {
         MSHookMessageEx(wsReq,
                         @selector(setEventLabel:),
-                        (IMP)&_hook_SBMainWorkspaceTransitionRequest_setEventLabel,
-                        (IMP *)&_orig_SBMainWorkspaceTransitionRequest_setEventLabel);
+                        (IMP)&_hook_WSReq_setEventLabel,
+                        (IMP *)&_orig_WSReq_setEventLabel);
     }
 }

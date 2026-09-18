@@ -78,3 +78,39 @@ tất cả trở về đúng cơ chế mà bản gốc 1.0.3 dùng:
 Chỉ mình `SBMainWorkspaceTransitionRequest` được hook thủ công bằng `MSHookMessageEx`
 sau khi `NSClassFromString` — class vắng mặt trên iOS nào đó là no-op sạch, không phụ
 thuộc cách nil-handling của engine.
+
+## v0.0.3 — kiến trúc "piggyback" đúng theo pipeline bản gốc
+
+Nhận đúng chẩn đoán của bản review: v0.0.2 sai ở chỗ (1) driver riêng tự chạy spring
++ set transform/opacity trên cùng layer với animation stock → xung đột (bounce/trong suốt),
+(2) mesh gánh cả hành trình icon→fullscreen thay vì chỉ là bulge quanh zoom như
+`CreateBulgedMesh` của bản gốc. v0.0.3 thay toàn bộ driver:
+
+```
+SpringBoard gesture ──► native zoom animation (stock, KHÔNG đụng)
+                              │
+                              ▼ presentationLayer (mỗi frame)
+                    native progress p  (0=icon, 1=full)
+                              │
+        anchor (icon rect, convert 1 LẦN, không feedback loop)
+                              ▼
+                   Genie Mesh (5×5 như bản gốc)
+                   anchor-driven, edge-aware, sin(πp) envelope
+                              ▼
+                    layer.meshTransform   ← THUỘC TÍNH DUY NHẤT ta ghi
+```
+
+- Progress = **SpringBoard native** (đọc `presentationLayer` mỗi frame) — timing không
+  bao giờ lệch với hệ thống (đúng mục "progress = SpringBoard native progress").
+- Chỉ ghi **`meshTransform`** — thuộc tính stock không bao giờ dùng → không thể phá
+  animation gốc; không setFrame, không removeAllAnimations, không opacity, không spring riêng.
+- Mesh = công thức anchor-driven (pull theo distance falloff + edge amplification +
+  opposite-edge continuity), open/close là **exact inverse** cùng một field.
+- Anchor convert sang layer space **một lần** khi attach — không đọc lại geometry đã
+  transform → hết feedback loop.
+- Mesh 5×5 (36 verts/25 faces) đúng mật độ bản gốc (25v/16f).
+- Stall-detect: progress đứng yên >0.35s (stock đã xong) → gỡ mesh sạch sẽ.
+- Nếu `CAMeshTransform` ném exception → tự tắt mesh, stock chạy thuần (an toàn tuyệt đối).
+
+Prefs: `enabled`, `animSpeed` (0=native, 1=iOS26), `warpStrength` (0–2), `meshMode`
+(Off/Normal/Swapped — Swapped là escape hatch nếu from/to bị ngược trên build iOS của bạn).

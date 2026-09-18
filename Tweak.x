@@ -26,7 +26,7 @@
  *
  *   5. HOME GRABBERS FADE — the page grabber views fade with the transition.
  *
- *  Prefs (com.ngkhoi.26anim):
+ *  Prefs (com.tungtung801.26anim):
  *      enabled       BOOL   master switch (default YES)
  *      animSpeed     INT    0 = original iOS native animation, 1 = iOS 26 style
  *      warpStrength  DOUBLE 0.0 – 2.0, multiplier on the genie warp (default 1.0)
@@ -83,8 +83,8 @@
 /* Tunables / defaults                                                 */
 /* ------------------------------------------------------------------ */
 
-#define kPrefsID            @"com.ngkhoi.26anim"
-#define kDarwinNotify       @"com.ngkhoi.26anim/settingschanged"
+#define kPrefsID            @"com.tungtung801.26anim"
+#define kDarwinNotify       @"com.tungtung801.26anim/settingschanged"
 
 /* Fallback spring parameters when Apple's settings can't be read.
    Chosen to match the iOS 26 feel: fast, damping just under critical
@@ -126,10 +126,10 @@ static id Anim26PrefValue(NSString *key) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         cands = @[
-            @"/var/jb/var/mobile/Library/Preferences/com.ngkhoi.26anim.plist", /* RootHide / rootless */
-            @"/var/mobile/Library/Preferences/com.ngkhoi.26anim.plist",        /* rootful             */
-            @"/var/jb/var/root/Library/Preferences/com.ngkhoi.26anim.plist",
-            @"/var/root/Library/Preferences/com.ngkhoi.26anim.plist"           /* root defaults       */
+            @"/var/jb/var/mobile/Library/Preferences/com.tungtung801.26anim.plist", /* RootHide / rootless */
+            @"/var/mobile/Library/Preferences/com.tungtung801.26anim.plist",        /* rootful             */
+            @"/var/jb/var/root/Library/Preferences/com.tungtung801.26anim.plist",
+            @"/var/root/Library/Preferences/com.tungtung801.26anim.plist"           /* root defaults       */
         ];
     });
     for (NSString *path in cands) {

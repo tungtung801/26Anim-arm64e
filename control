@@ -1,9 +1,9 @@
-Package: com.ngkhoi.26anim
+Package: com.tungtung801.26anim
 Name: 26Anim
 Depends: mobilesubstrate
 Description: iOS 26 app opening/closing animation for older iOS. Directional genie warp (CAMeshTransform), Apple-native springs, continuous corner morph. RootHide / Dopamine rootless + rootful. Original by ngkhoi — rebuild & improvements.
-Maintainer: ngkhoi
-Author: ngkhoi (original) — animation rebuild
+Maintainer: tungtung801
+Author: ngkhoi (original 26Anim) — rebuilt by tungtung801
 Section: Tweaks
 Architecture: iphoneos-arm
-Version: 2.1.0
+Version: 0.0.1

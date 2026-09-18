@@ -52,6 +52,27 @@ else
 fi
 mkdir -p "$THEOS_DIR/sdks" "$THEOS_DIR/toolchain"
 
+
+# ----------------------------------------------------------------------------
+# Optional: ROOTHIDE=1 ./setup-theos.sh  → thay theos bằng fork roothide/theos
+# (auto-synced 100% với theos chính thức, cần để build THEOS_PACKAGE_SCHEME=roothide)
+# ----------------------------------------------------------------------------
+if [ "${ROOTHIDE:-0}" = "1" ]; then
+    log "ROOTHIDE mode (roothide/theos fork): dùng fork roothide/theos"
+    if [ -d "$THEOS_DIR/.git" ]; then
+        CURRENT_URL="$(git -C "$THEOS_DIR" config remote.origin.url)"
+        case "$CURRENT_URL" in
+            *roothide/theos*) log "roothide/theos đã có — bỏ qua" ;;
+            *) log "THEOS hiện tại là mainline — xoá để clone lại bằng fork roothide"
+               rm -rf "$THEOS_DIR"
+               git clone --recursive https://github.com/roothide/theos.git "$THEOS_DIR" ;;
+        esac
+    else
+        git clone --recursive https://github.com/roothide/theos.git "$THEOS_DIR"
+    fi
+    mkdir -p "$THEOS_DIR/sdks" "$THEOS_DIR/toolchain"
+fi
+
 # ----------------------------------------------------------------------------
 # 2. iOS toolchain (clang cho Linux nhắm arm64/arm64e Apple)
 # ----------------------------------------------------------------------------

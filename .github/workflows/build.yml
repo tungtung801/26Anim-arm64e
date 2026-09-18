@@ -1,0 +1,87 @@
+name: Build 26Anim (roothide)
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  THEOS: ${{ github.workspace }}/theos
+  TOOLCHAIN_TAG: main-update_3-eabca92   # clang 19 iOS toolchain (L1ghtmann/llvm-project)
+
+jobs:
+  build-roothide:
+    name: roothide (RootHide Bootstrap, iphoneos-arm64e)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache roothide/theos
+        uses: actions/cache@v4
+        id: cache
+        with:
+          path: theos
+          key: theos-roothide-tc19-sdk165-v2
+
+      - name: Install roothide/theos + toolchain + SDK + ldid
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          sudo apt-get update -y
+          sudo apt-get install -y build-essential fakeroot rsync curl perl git unzip xz-utils
+          git clone --recursive https://github.com/roothide/theos.git $THEOS
+          curl -sL --retry 3 -o /tmp/tc.tar.xz \
+            "https://github.com/L1ghtmann/llvm-project/releases/download/${TOOLCHAIN_TAG}/iOSToolchain-x86_64.tar.xz"
+          tar -xJf /tmp/tc.tar.xz -C $THEOS/toolchain/ && rm -f /tmp/tc.tar.xz
+          curl -sL --retry 3 -o /tmp/sdks.zip https://github.com/theos/sdks/archive/master.zip
+          unzip -q /tmp/sdks.zip -d /tmp/sdks_x '*/iPhoneOS16.5.sdk/*'
+          mv /tmp/sdks_x/sdks-master/iPhoneOS16.5.sdk $THEOS/sdks/
+          rm -rf /tmp/sdks.zip /tmp/sdks_x
+          curl -sL --retry 3 -o /usr/local/bin/ldid \
+            https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64
+          chmod +x /usr/local/bin/ldid
+          $THEOS/toolchain/linux/iphone/bin/clang --version
+
+      - name: Build (THEOS_PACKAGE_SCHEME=roothide)
+        run: |
+          export PATH="$THEOS/bin:/usr/local/bin:$PATH"
+          make clean
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide
+          ls -la packages/
+
+      - name: Verify (iphoneos-arm64e + jbroot linkage)
+        run: |
+          dpkg-deb -f packages/*_iphoneos-arm64e.deb Architecture | grep -qx iphoneos-arm64e
+          dpkg-deb -f packages/*_iphoneos-arm64e.deb Package | grep -qx com.tungtung801.26anim
+          dpkg-deb -c packages/*_iphoneos-arm64e.deb | grep -q Library/MobileSubstrate/DynamicLibraries/26Anim.dylib
+          ! dpkg-deb -c packages/*_iphoneos-arm64e.deb | grep -q "var/jb"
+          echo "✓ roothide OK (iphoneos-arm64e, jbroot layout, com.tungtung801.26anim)"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 26anim-roothide
+          path: packages/*_iphoneos-arm64e.deb
+          if-no-files-found: error
+
+  release:
+    name: Release
+    needs: build-roothide
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: 26anim-roothide
+          path: dist
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.deb
+          generate_release_notes: true

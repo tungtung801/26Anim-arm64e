@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>items</key>
+	<array>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Main Toggle</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>Enable Animations</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.ngkhoi.26anim</string>
+			<key>key</key>
+			<string>enabled</string>
+			<key>PostNotification</key>
+			<string>com.ngkhoi.26anim/settingschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Animation Style</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSegmentCell</string>
+			<key>label</key>
+			<string>animSpeed</string>
+			<key>validValues</key>
+			<array>
+				<integer>0</integer>
+				<integer>1</integer>
+			</array>
+			<key>validTitles</key>
+			<array>
+				<string>Original (iOS native)</string>
+				<string>iOS 26</string>
+			</array>
+			<key>default</key>
+			<integer>1</integer>
+			<key>defaults</key>
+			<string>com.ngkhoi.26anim</string>
+			<key>key</key>
+			<string>animSpeed</string>
+			<key>PostNotification</key>
+			<string>com.ngkhoi.26anim/settingschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Genie warp intensity — how strongly the window bends toward the icon (iOS 26 liquid look). Default 1.0.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>label</key>
+			<string>Warp Strength</string>
+			<key>min</key>
+			<real>0.0</real>
+			<key>max</key>
+			<real>2</real>
+			<key>showValue</key>
+			<true/>
+			<key>default</key>
+			<real>1</real>
+			<key>defaults</key>
+			<string>com.ngkhoi.26anim</string>
+			<key>key</key>
+			<string>warpStrength</string>
+			<key>PostNotification</key>
+			<string>com.ngkhoi.26anim/settingschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Transition speed — lower value = snappier. Default 1.0.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>label</key>
+			<string>Speed Factor</string>
+			<key>min</key>
+			<real>0.5</real>
+			<key>max</key>
+			<real>2</real>
+			<key>showValue</key>
+			<true/>
+			<key>default</key>
+			<real>1</real>
+			<key>defaults</key>
+			<string>com.ngkhoi.26anim</string>
+			<key>key</key>
+			<string>speedFactor</string>
+			<key>PostNotification</key>
+			<string>com.ngkhoi.26anim/settingschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Respring</string>
+			<key>action</key>
+			<string>respring:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Developer</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSTitleValueCell</string>
+			<key>label</key>
+			<string>ngkhoi</string>
+			<key>get</key>
+			<string>readSpecifierValue:</string>
+			<key>sublabel</key>
+			<string>@cakoi_.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>26Anim 2.0 — rebuilt genie warp, Apple-native springs, continuous corner morph.</string>
+		</dict>
+	</array>
+	<key>title</key>
+	<string>26Anim</string>
+</dict>
+</plist>
